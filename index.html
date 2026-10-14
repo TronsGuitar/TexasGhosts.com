@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TexasGhosts.com — Texas Ghost &amp; Historical Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <style>
+    html, body { height: 100%; margin: 0; background: #111; color: #eee; font-family: sans-serif; }
+    #map { height: 100%; }
+    #drop { position: absolute; z-index: 1000; top: 10px; right: 10px; padding: 8px 12px;
+            background: #6b21a8; color: #fff; border-radius: 4px; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <a id="drop" href="#" target="_blank" rel="noopener">➕ Drop Experience Pin</a>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script>
+    const REPO = "TronsGuitar/TexasGhosts.com";
+    const map = L.map("map").setView([31.0, -99.5], 6);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: "&copy; OpenStreetMap contributors &copy; CARTO", maxZoom: 19
+    }).addTo(map);
+
+    const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const layers = {};
+    function addLayer(name, items, icon) {
+      const cluster = L.markerClusterGroup();
+      items.forEach(i => L.marker([i.lat, i.lng], { title: i.title })
+        .bindPopup(`<b>${icon} ${esc(i.title)}</b><br>${esc(i.text || i.story || "")}`)
+        .addTo(cluster));
+      layers[name] = cluster.addTo(map);
+    }
+    const load = f => fetch(f).then(r => r.ok ? r.json() : []).catch(() => []);
+
+    const cemeteries = [{ title: "Riley Pioneer Cemetery (Carrollton)", lat: 32.9756, lng: -96.8900, text: "1880s pioneer family burial plot." }];
+    const ghostTowns = [{ title: "Terlingua Ghost Town", lat: 29.3208, lng: -103.6150, text: "Former mercury mining camp." }];
+    const folklore = [{ title: "Donkey Lady Bridge (San Antonio)", lat: 29.2970, lng: -98.4400, text: "Texas urban legend." }];
+
+    Promise.all([load("data/thc_markers.json"), load("data/community_ghosts.json")]).then(([thc, community]) => {
+      addLayer("📜 THC Markers", thc, "📜");
+      addLayer("🪦 Cemeteries", cemeteries, "🪦");
+      addLayer("🏚️ Ghost Towns", ghostTowns, "🏚️");
+      addLayer("🔮 Folklore", folklore, "🔮");
+      addLayer("🗣️ Community Pins", community, "🗣️");
+      L.control.layers(null, layers).addTo(map);
+    });
+
+    document.getElementById("drop").addEventListener("click", e => {
+      e.preventDefault();
+      const c = map.getCenter();
+      const body = `Title: \nLat: ${c.lat.toFixed(5)}\nLng: ${c.lng.toFixed(5)}\nStory: `;
+      window.open(`https://github.com/${REPO}/issues/new?title=${encodeURIComponent("New ghost pin")}&body=${encodeURIComponent(body)}`, "_blank", "noopener");
+    });
+  </script>
+</body>
+</html>
