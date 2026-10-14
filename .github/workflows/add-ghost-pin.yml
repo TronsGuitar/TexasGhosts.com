@@ -1,0 +1,44 @@
+name: Add Ghost Pin
+on:
+  issues:
+    types: [labeled]
+permissions:
+  contents: write
+jobs:
+  add:
+    if: github.event.label.name == 'approved-pin'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Append pin
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          python - <<'PY'
+          import json, os, re
+          body = os.environ["ISSUE_BODY"] or ""
+          def field(n):
+              m = re.search(r"^\**%s\**:?\**\s*(.+)$" % n, body, re.I | re.M)
+              return m.group(1).strip() if m else ""
+          lat, lng = float(field("lat")), float(field("lng"))
+          # privacy fuzzing: round to 3 decimals (~100 m)
+          pin = {"id": int(os.environ["ISSUE_NUMBER"]),
+                 "title": os.environ["ISSUE_TITLE"],
+                 "story": field("story"),
+                 "lat": round(lat, 3), "lng": round(lng, 3)}
+          path = "data/community_ghosts.json"
+          data = json.load(open(path))
+          data = [p for p in data if p.get("id") != pin["id"]] + [pin]
+          json.dump(data, open(path, "w"), indent=1)
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/community_ghosts.json
+          git diff --cached --quiet || (git commit -m "Add community pin #${{ github.event.issue.number }}" && git push)
