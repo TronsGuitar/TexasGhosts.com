@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Texas Ghosts – Haunted &amp; Historical Map</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<style>
+  html,body{height:100%;margin:0;background:#0a0a0f;color:#e5e7eb}
+  #map{height:100%;width:100%;background:#0a0a0f}
+  .ghost-cluster{border-radius:50%;background:rgba(139,92,246,.35);border:2px solid #a78bfa;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;box-shadow:0 0 14px 4px rgba(167,139,250,.7)}
+  .pin{width:16px;height:16px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 10px 3px currentColor}
+  #panel{transition:transform .25s}
+  @media(max-width:767px){#panel{position:fixed;left:0;right:0;bottom:0;height:60vh;transform:translateY(100%)}#panel.open{transform:none}}
+  @media(min-width:768px){#panel{width:400px;flex:none}#panel.closed{display:none}}
+  .drop-mode #map{cursor:crosshair}
+</style>
+</head>
+<body class="flex flex-col md:flex-row">
+<main class="relative flex-1 h-full min-h-0">
+  <div id="map"></div>
+  <div class="absolute top-2 left-14 right-2 z-[1000] flex flex-wrap gap-2 items-center pointer-events-none">
+    <div id="filters" class="flex flex-wrap gap-1 pointer-events-auto"></div>
+    <button id="dropBtn" class="pointer-events-auto bg-fuchsia-700 hover:bg-fuchsia-600 text-white text-sm px-3 py-1 rounded shadow">👻 Drop Experience Pin</button>
+  </div>
+</main>
+<aside id="panel" class="closed bg-zinc-900 border-l border-zinc-700 z-[1100] overflow-y-auto p-4">
+  <button id="closePanel" class="float-right text-zinc-400 hover:text-white text-xl" aria-label="Close">&times;</button>
+  <div id="dossier"></div>
+  <div id="giscus-box" class="mt-4"></div>
+</aside>
+
+<div id="modal" class="hidden fixed inset-0 z-[2000] bg-black/70 flex items-center justify-center p-4">
+  <div class="bg-zinc-900 border border-zinc-700 rounded p-4 w-full max-w-md space-y-3">
+    <h2 class="text-lg font-bold">Drop Experience Pin</h2>
+    <input id="pinName" class="w-full bg-zinc-800 p-2 rounded" placeholder="Title (e.g. Kitchen light turns on)" maxlength="120">
+    <textarea id="pinDesc" rows="5" class="w-full bg-zinc-800 p-2 rounded" placeholder="Describe your experience" maxlength="2000"></textarea>
+    <label class="flex items-start gap-2 text-sm"><input type="checkbox" id="privacy" checked class="mt-1">
+      <span><b>Residential Privacy Guard</b> – round location to 3 decimals (~100 m / block level).</span></label>
+    <div id="pinCoords" class="text-xs text-zinc-400"></div>
+    <div class="flex gap-2 justify-end">
+      <button id="cancelPin" class="px-3 py-1 rounded bg-zinc-700">Cancel</button>
+      <button id="submitPin" class="px-3 py-1 rounded bg-fuchsia-700">Submit via GitHub Issue</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const GITHUB_CONFIG = { owner: "TronsGuitar", repo: "TexasGhosts.com" };
+// Fill in repoId / categoryId from https://giscus.app to enable the forum threads.
+const GISCUS = { repoId: "", category: "General", categoryId: "" };
+
+const CATEGORIES = {
+  marker:    { label: "THC 'Died In' Markers",     color: "#f87171" },
+  cemetery:  { label: "Remote/Pioneer Cemeteries", color: "#a3e635" },
+  ghost_town:{ label: "Classic Ghost Towns",       color: "#fbbf24" },
+  folklore:  { label: "Texas Ghost Stories",       color: "#60a5fa" },
+  community: { label: "User Experiences",          color: "#e879f9" }
+};
+
+const SITES = [
+  { id:"user-riley-1352", category:"community", name:"Riley Dr Kitchen Haunting (1300 block)", lat:32.9896, lon:-96.9018,
+    description:"Community experience, 1300 block of Riley Dr, Carrollton (2005–2010). Kitchen occurrences: glasses falling, bangs under the sink, flipped pictures, and a kitchen light that turned on ultra-bright by itself for 5 years. Next to the sink sits a 7-foot failed railroad-tie retaining wall that cost $10k at closing." },
+  { id:"cem-riley-1328", category:"cemetery", name:"Riley Pioneer Cemetery", lat:32.9897, lon:-96.9031,
+    description:"1328 Riley Dr. 1850s Jacob Riley preemption grant homestead graveyard with 7 surviving markers (1880–1952) on a raised knoll between two 1996 suburban homes." },
+  { id:"cem-furneaux", category:"cemetery", name:"Furneaux Cemetery", lat:32.9569, lon:-96.9001,
+    description:"Historic pioneer cemetery in Carrollton, resting place of early settlers of the area." },
+  { id:"marker-muncey", category:"marker", name:"Muncey Massacre (Plano)", lat:33.0198, lon:-96.6989,
+    description:"Site tied to the 1840s–50s frontier violence in Collin County; THC-style 'killed in' history." },
+  { id:"marker-sugar-hill", category:"marker", name:"Sugar Hill Shootout (Farmersville)", lat:33.1637, lon:-96.3606,
+    description:"Frontier-era gunfight remembered in Farmersville, Collin County." },
+  { id:"gt-lebanon", category:"ghost_town", name:"Lebanon Ghost Town (Frisco)", lat:33.1507, lon:-96.8236,
+    description:"Early Collin County settlement whose remnants are absorbed into modern Frisco." },
+  { id:"folk-goatman", category:"folklore", name:"Old Alton / Goatman's Bridge (Denton)", lat:33.2740, lon:-97.0480,
+    description:"Old Alton Bridge, legend of the Goatman. Visitors report apparitions and eerie sounds." },
+  { id:"folk-white-rock", category:"folklore", name:"Lady of White Rock Lake (Dallas)", lat:32.8300, lon:-96.7300,
+    description:"A drenched hitchhiker in a 1930s gown is said to haunt the lake's shores." },
+  { id:"folk-baker", category:"folklore", name:"The Baker Hotel (Mineral Wells)", lat:32.8083, lon:-98.1106,
+    description:"Shuttered 1929 resort hotel famed for paranormal reports, especially the 7th floor." },
+  { id:"gt-thurber", category:"ghost_town", name:"Thurber Ghost Town", lat:32.5043, lon:-98.4172,
+    description:"Former coal-mining company town in Erath County; smokestack and ruins remain." },
+  { id:"marker-hardin", category:"marker", name:"John Wesley Hardin – Acme Saloon (El Paso)", lat:31.7587, lon:-106.4869,
+    description:"Marker for the 1895 killing of gunman John Wesley Hardin at the Acme Saloon." },
+  { id:"gt-terlingua", category:"ghost_town", name:"Terlingua Ghost Town", lat:29.3208, lon:-103.6150,
+    description:"Former quicksilver mining town in Big Bend with a historic cemetery." },
+  { id:"folk-saratoga", category:"folklore", name:"Bragg Road Saratoga Light", lat:30.2985, lon:-94.5920,
+    description:"Mysterious floating lights seen along Bragg Road in the Big Thicket." }
+];
+
+const map = L.map("map", { center:[32.9896,-96.9018], zoom:16, maxZoom:19 });
+const dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+  { attribution:"&copy; OpenStreetMap &copy; CARTO", subdomains:"abcd", maxZoom:20 }).addTo(map);
+const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  { attribution:"Tiles &copy; Esri", maxZoom:19 });
+L.control.layers({ "Dark Map":dark, "Satellite":sat }).addTo(map);
+
+const cluster = L.markerClusterGroup({
+  maxClusterRadius:45, disableClusteringAtZoom:16,
+  iconCreateFunction: c => {
+    const n = c.getChildCount(), s = n < 10 ? 34 : n < 100 ? 42 : 50;
+    return L.divIcon({ html:`<div class="ghost-cluster" style="width:${s}px;height:${s}px">${n}</div>`,
+      className:"", iconSize:[s,s] });
+  }
+});
+map.addLayer(cluster);
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const active = new Set(Object.keys(CATEGORIES));
+const all = [];
+
+function haversine(a, b, c, d) {
+  const R = 6371000, r = x => x*Math.PI/180;
+  const h = Math.sin(r(c-a)/2)**2 + Math.cos(r(a))*Math.cos(r(c))*Math.sin(r(d-b)/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function nearby(site) {
+  let best = null;
+  for (const o of all) {
+    if (o.id === site.id || (o.category !== "cemetery" && o.category !== "marker")) continue;
+    const d = haversine(site.lat, site.lon, o.lat, o.lon);
+    if (d <= 1000 && (!best || d < best.d)) best = { o, d };
+  }
+  return best;
+}
+
+function addSites(list) {
+  for (const s of list) {
+    if (!CATEGORIES[s.category] || isNaN(+s.lat) || isNaN(+s.lon) || all.some(x => x.id === s.id)) continue;
+    s.lat = +s.lat; s.lon = +s.lon;
+    const color = CATEGORIES[s.category].color;
+    s._marker = L.marker([s.lat, s.lon], { icon: L.divIcon({
+      html:`<div class="pin" style="background:${color};color:${color}"></div>`, className:"", iconSize:[16,16] }) });
+    s._marker.on("click", () => { if (!dropMode) show(s); });
+    all.push(s);
+  }
+  refresh();
+}
+function refresh() {
+  cluster.clearLayers();
+  cluster.addLayers(all.filter(s => active.has(s.category)).map(s => s._marker));
+}
+
+function show(s) {
+  const n = nearby(s), cat = CATEGORIES[s.category];
+  document.getElementById("dossier").innerHTML = `
+    <span class="text-xs px-2 py-0.5 rounded" style="background:${cat.color};color:#000">${esc(cat.label)}</span>
+    <h2 class="text-xl font-bold mt-2">${esc(s.name)}</h2>
+    <p class="text-xs text-zinc-400">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</p>
+    <p class="mt-3 text-sm whitespace-pre-line">${esc(s.description)}</p>
+    ${s.source ? `<p class="mt-2 text-xs text-zinc-500">Source: ${esc(s.source)}</p>` : ""}
+    ${n ? `<div class="mt-3 inline-block text-xs bg-zinc-800 border border-zinc-600 rounded px-2 py-1">📍 Nearby history: ${esc(n.o.name)} (${Math.round(n.d)} m)</div>` : ""}`;
+  const p = document.getElementById("panel");
+  p.classList.remove("closed"); p.classList.add("open");
+  map.invalidateSize();
+  loadGiscus(s);
+}
+function loadGiscus(s) {
+  const box = document.getElementById("giscus-box");
+  box.innerHTML = "";
+  if (!GISCUS.repoId) {
+    box.innerHTML = '<p class="text-xs text-zinc-500">Discussion thread: configure GISCUS.repoId / categoryId (see giscus.app) to enable comments.</p>';
+    return;
+  }
+  const g = document.createElement("script");
+  g.src = "https://giscus.app/client.js";
+  const attrs = { repo:`${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}`, "repo-id":GISCUS.repoId,
+    category:GISCUS.category, "category-id":GISCUS.categoryId, mapping:"specific",
+    term:`texasghosts-pin-${s.id}`, "reactions-enabled":"1", "input-position":"top",
+    theme:"dark", lang:"en", crossorigin:"anonymous" };
+  for (const [k, v] of Object.entries(attrs)) g.setAttribute("data-" + k, v);
+  g.crossOrigin = "anonymous"; g.async = true;
+  box.appendChild(g);
+}
+document.getElementById("closePanel").onclick = () => {
+  const p = document.getElementById("panel");
+  p.classList.add("closed"); p.classList.remove("open"); map.invalidateSize();
+};
+
+const fWrap = document.getElementById("filters");
+for (const [k, c] of Object.entries(CATEGORIES)) {
+  const b = document.createElement("button");
+  b.className = "text-xs px-2 py-1 rounded border shadow bg-zinc-900/90";
+  const paint = () => { b.style.borderColor = c.color; b.style.opacity = active.has(k) ? 1 : .4; };
+  b.textContent = c.label; paint();
+  b.onclick = () => { active.has(k) ? active.delete(k) : active.add(k); paint(); refresh(); };
+  fWrap.appendChild(b);
+}
+
+let dropMode = false, dropLL = null;
+const modal = document.getElementById("modal");
+document.getElementById("dropBtn").onclick = () => {
+  dropMode = !dropMode;
+  document.body.classList.toggle("drop-mode", dropMode);
+  document.getElementById("dropBtn").textContent = dropMode ? "Tap the map… (cancel)" : "👻 Drop Experience Pin";
+};
+function coords() {
+  const d = document.getElementById("privacy").checked ? 3 : 6;
+  return { lat:+dropLL.lat.toFixed(d), lon:+dropLL.lng.toFixed(d) };
+}
+function showCoords() {
+  const c = coords();
+  document.getElementById("pinCoords").textContent = `Location: ${c.lat}, ${c.lon}`;
+}
+map.on("click", e => {
+  if (!dropMode) return;
+  dropLL = e.latlng; showCoords(); modal.classList.remove("hidden");
+});
+document.getElementById("privacy").onchange = showCoords;
+document.getElementById("cancelPin").onclick = () => modal.classList.add("hidden");
+document.getElementById("submitPin").onclick = () => {
+  const name = document.getElementById("pinName").value.trim() || "Community Experience";
+  const description = document.getElementById("pinDesc").value.trim();
+  const payload = { name, description, ...coords(), category:"community" };
+  const body = "Submit this issue to propose a pin. A maintainer will review it.\n\n```json\n" + JSON.stringify(payload, null, 2) + "\n```\n";
+  const url = `https://github.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/issues/new?labels=ghost-pin&title=${encodeURIComponent("Ghost Pin: " + name)}&body=${encodeURIComponent(body)}`;
+  window.open(url, "_blank", "noopener");
+  modal.classList.add("hidden");
+};
+
+addSites(SITES);
+for (const f of ["./data/thc_markers.json", "./data/community_ghosts.json"]) {
+  fetch(f).then(r => r.ok ? r.json() : []).then(d => Array.isArray(d) && addSites(d)).catch(() => {});
+}
+</script>
+</body>
+</html>
