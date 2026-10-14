@@ -1,0 +1,57 @@
+name: Add Ghost Pin
+on:
+  issues:
+    types: [labeled]
+permissions:
+  contents: write
+  issues: write
+jobs:
+  add:
+    if: github.repository == 'TronsGuitar/TexasGhosts.com' && github.event.label.name == 'approved-pin'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Append pin
+        env:
+          BODY: ${{ github.event.issue.body }}
+          NUM: ${{ github.event.issue.number }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          body = os.environ["BODY"]
+          m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", body, re.S) or re.search(r"(\{.*\})", body, re.S)
+          if not m:
+              raise SystemExit("No JSON block found")
+          pin = json.loads(m.group(1))
+          lat, lon = float(pin["lat"]), float(pin["lon"])
+          if not (25 <= lat <= 37 and -107 <= lon <= -93):
+              raise SystemExit("Pin outside Texas")
+          clean = {
+              "id": "community-" + os.environ["NUM"],
+              "category": "community",
+              "name": str(pin.get("name", "Community Experience"))[:120],
+              "lat": lat, "lon": lon,
+              "description": str(pin.get("description", ""))[:2000],
+              "source": "Community submission",
+          }
+          path = "data/community_ghosts.json"
+          data = json.load(open(path)) if os.path.exists(path) else []
+          data = [d for d in data if d.get("id") != clean["id"]] + [clean]
+          os.makedirs("data", exist_ok=True)
+          json.dump(data, open(path, "w"), indent=2)
+          PY
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/community_ghosts.json
+          git commit -m "Add community ghost pin from #${{ github.event.issue.number }}"
+          git push origin HEAD:main
+      - name: Comment and close
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --body "Approved and added to the map. Thank you!"
+          gh issue close ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY"
